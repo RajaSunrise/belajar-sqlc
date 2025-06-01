@@ -3298,3 +3298,465 @@ Dukungan untuk Microsoft SQL Server sedang dalam tahap beta.
     *   `github.com/microsoft/go-mssqldb` (pengembangan lebih baru, mungkin menjadi standar)
 *   **Catatan Khusus**:
     *   Periksa [dokumentasi resmi sqlc](https://docs.sqlc.dev/en/latest/tutorials/getting-started-sql-server.html) dan [isu GitHub](https://github.com/sqlc-dev/sqlc/issues) untuk status dukungan terbaru, batasan, dan cara penggunaan yang direkomendasikan.
+
+## 12. Praktik Terbaik Menggunakan sqlc
+
+Untuk memaksimalkan manfaat `sqlc` dan menjaga proyek Anda tetap terorganisir dan mudah dipelihara, pertimbangkan praktik terbaik berikut:
+
+### Organisasi File SQL
+
+*   **Satu file per tabel/domain**: Untuk proyek yang lebih besar, pertimbangkan untuk mengorganisir file kueri (`.sql`) Anda berdasarkan tabel atau domain bisnis yang mereka layani. Misalnya, `users.sql`, `products.sql`, `orders.sql`. Ini membuat kueri lebih mudah ditemukan dan dikelola.
+*   **Berdasarkan Fitur**: Alternatifnya, Anda bisa mengelompokkan kueri berdasarkan fitur atau _use case_. Misalnya, `auth_queries.sql`, `reporting_queries.sql`.
+*   **Direktori `query` dan `schema`**: Seperti yang umum dilakukan, pisahkan file skema DDL (misalnya, dalam `db/migration/` atau `db/schema/`) dari file kueri (misalnya, dalam `db/query/`). `sqlc.yaml` akan mereferensikan path-path ini.
+*   **Konsistensi**: Pilih satu strategi dan terapkan secara konsisten di seluruh proyek.
+
+### Penamaan Kueri yang Konsisten
+
+Gunakan konvensi penamaan yang jelas dan konsisten untuk fungsi `sqlc` Anda (bagian `FunctionName` dalam anotasi `-- name: FunctionName :type`).
+*   **Pola CRUD**:
+    *   `CreateUser`
+    *   `GetUserByID`, `GetUserByEmail`
+    *   `ListUsers`, `ListUsersByStatus`
+    *   `UpdateUserEmail`, `UpdateUserPassword`
+    *   `DeleteUser`
+*   **Deskriptif**: Nama fungsi harus jelas mencerminkan apa yang dilakukan kueri tersebut. Hindari nama yang terlalu umum seperti `Query1` atau `GetData`.
+*   **Gunakan Kata Kerja Aktif**: Mulai dengan kata kerja seperti `Get`, `List`, `Create`, `Update`, `Delete`, `Add`, `Remove`, `Find`.
+
+### Menjaga Kueri Tetap Sederhana
+
+*   **Satu Kueri, Satu Tujuan**: Setiap anotasi `sqlc` idealnya melayani satu tujuan logis. Hindari kueri yang terlalu kompleks yang mencoba melakukan banyak hal sekaligus.
+*   **Pisahkan Logika**: Jika Anda memiliki logika bisnis yang kompleks, pertimbangkan untuk melakukannya di Go setelah mengambil data mentah dengan `sqlc`, atau gunakan beberapa kueri `sqlc` yang lebih kecil dalam satu transaksi.
+*   **Manfaatkan SQL, tapi Jangan Berlebihan**: `sqlc` memungkinkan Anda menggunakan kekuatan penuh SQL. Namun, kueri yang sangat rumit bisa sulit dibaca dan dipelihara. Cari keseimbangan.
+
+### Manfaatkan Fitur Basis Data Anda
+
+Karena `sqlc` adalah _SQL-first_, jangan ragu untuk menggunakan fitur-fitur canggih dari basis data Anda:
+*   **Common Table Expressions (CTEs)**: Untuk kueri yang lebih terstruktur dan mudah dibaca.
+*   **Window Functions**: Untuk analisis data yang kompleks.
+*   **Tipe Data Spesifik**: Seperti `JSONB`, `ARRAY`, `ENUM` di PostgreSQL. Gunakan `overrides` di `sqlc.yaml` untuk memetakannya ke tipe Go yang sesuai.
+*   **Constraints dan Triggers**: Definisikan ini di skema Anda untuk menjaga integritas data di level basis data.
+
+### Manajemen Skema dan Migrasi
+
+*   **Gunakan Alat Migrasi**: `sqlc` tidak menangani migrasi skema. Gunakan alat seperti `golang-migrate/migrate`, `pressly/goose`, `Atlas`, atau alat migrasi favorit Anda.
+*   **Skema `sqlc` Harus Sinkron**: Pastikan file skema (`schema.sql` atau direktori skema) yang dibaca `sqlc` selalu mencerminkan keadaan *target* dari basis data Anda setelah semua migrasi diterapkan.
+*   **Alur Kerja Umum**:
+    1.  Buat file migrasi baru (misalnya, `003_add_users_bio.sql`).
+    2.  Perbarui file skema utama yang dibaca `sqlc` (jika Anda menggunakan satu file skema gabungan) ATAU pastikan `sqlc` membaca direktori file migrasi Anda.
+    3.  Jalankan `sqlc generate`.
+    4.  Terapkan migrasi ke basis data Anda.
+
+### Pengujian
+
+*   **Unit Testing Logika Bisnis**: Kode Go yang menggunakan fungsi-fungsi yang dihasilkan `sqlc` harus diuji unit. Anda dapat:
+    *   Menggunakan _mocking_ untuk interface `Querier` (jika `emit_interface: true`). Pustaka seperti `stretchr/testify/mock` dapat membantu.
+    *   Ini memungkinkan Anda menguji logika bisnis tanpa perlu koneksi basis data nyata.
+*   **Integration Testing dengan Basis Data Nyata**: Sangat penting untuk menguji kueri `sqlc` Anda terhadap basis data nyata (atau basis data tes yang identik).
+    *   Siapkan basis data tes (misalnya, dalam Docker kontainer).
+    *   Jalankan migrasi untuk membuat skema.
+    *   Jalankan tes yang memanggil fungsi `sqlc` dan memverifikasi hasilnya dan efek sampingnya di basis data.
+    *   Pastikan untuk membersihkan data tes setelah setiap pengujian atau suite pengujian.
+    *   Pustaka seperti `testcontainers-go` bisa sangat membantu untuk mengelola siklus hidup kontainer basis data tes.
+
+### Integrasi dengan `go generate`
+
+Anda dapat mengotomatiskan pemanggilan `sqlc generate` menggunakan direktif `go:generate`.
+Tambahkan komentar berikut ke salah satu file Go Anda (biasanya di dekat tempat paket `sqlc` digunakan, atau di `main.go` atau file `tools.go`):
+
+```go
+//go:generate go run github.com/sqlc-dev/sqlc/cmd/sqlc generate
+```
+Atau jika Anda sudah menginstal `sqlc` secara global:
+```go
+//go:generate sqlc generate
+```
+Kemudian, Anda bisa menjalankan `go generate ./...` dari root proyek Anda untuk memicu `sqlc generate` bersama dengan generator kode lainnya.
+
+### Versi Kontrol untuk Skema dan Kueri
+
+*   **Semua di Git**: File `sqlc.yaml`, semua file skema (`.sql` DDL), dan semua file kueri (`.sql` dengan anotasi `sqlc`) harus dimasukkan ke dalam sistem kontrol versi (misalnya, Git).
+*   **Kode yang Dihasilkan**: File Go yang dihasilkan `sqlc` (di direktori `out`) **biasanya tidak** dimasukkan ke Git. Mereka harus dihasilkan ulang sebagai bagian dari proses _build_ atau melalui `go generate`. Ini menghindari _merge conflict_ pada kode yang dihasilkan dan memastikan kode selalu sinkron dengan skema dan kueri. Namun, beberapa tim memilih untuk memasukkannya untuk menyederhanakan proses _build_ di beberapa lingkungan CI/CD; ini adalah pilihan tim.
+
+### Perhatikan Performa
+
+*   **`EXPLAIN` Kueri Anda**: `sqlc` hanya menghasilkan kode berdasarkan SQL yang Anda tulis. Jika SQL Anda tidak efisien, aplikasi Anda akan lambat. Gunakan `EXPLAIN` (atau `EXPLAIN ANALYZE`) dari basis data Anda untuk menganalisis rencana eksekusi kueri yang kompleks.
+*   **Indeks yang Tepat**: Pastikan tabel Anda memiliki indeks yang sesuai untuk kolom yang sering digunakan dalam klausa `WHERE`, `JOIN`, dan `ORDER BY`.
+*   **`emit_prepared_queries`**: Untuk kueri yang sering dijalankan, pertimbangkan untuk menyetel `emit_prepared_queries: true` di `sqlc.yaml`. Ini dapat mengurangi overhead parsing kueri di sisi basis data.
+*   **Operasi Massal**: Gunakan `:copyfrom` (PostgreSQL) atau strategi _batching_ yang sesuai untuk operasi `INSERT`/`UPDATE`/`DELETE` massal daripada menjalankan banyak kueri individual dalam perulangan.
+*   **N+1 Problem**: Hati-hati terhadap masalah N+1, di mana Anda mengambil daftar item (`N` item) dan kemudian melakukan kueri basis data terpisah untuk setiap item tersebut. Cobalah untuk mengambil semua data yang diperlukan dalam satu atau beberapa kueri yang lebih efisien menggunakan `JOIN` atau `IN` clause.
+
+---
+
+## 13. Integrasi dengan Alat Lain
+
+`sqlc` adalah alat yang fokus dan bekerja dengan baik bersama alat-alat lain dalam ekosistem Go.
+
+### Alat Migrasi (migrate, goose, Atlas, dll.)
+
+Seperti yang telah dibahas, `sqlc` tidak menangani migrasi. Anda perlu mengintegrasikannya dengan alat migrasi:
+*   **`golang-migrate/migrate`**: Populer, mendukung banyak DB, menggunakan file SQL `up`/`down`.
+*   **`pressly/goose`**: Mirip dengan `golang-migrate/migrate`.
+*   **`Atlas`**: Pendekatan deklaratif modern, bisa menghasilkan migrasi atau menyinkronkan skema.
+
+**Integrasi**:
+1.  Definisikan skema Anda sebagai serangkaian file migrasi (misalnya, `001_create_users.up.sql`, `002_add_posts_table.up.sql`).
+2.  Konfigurasikan `sqlc.yaml` untuk membaca file skema Anda dari:
+    *   Direktori yang berisi file migrasi `up` Anda (jika alat migrasi Anda tidak membuat file skema gabungan). `sqlc` akan mencoba mem-parsing semua file `.sql` di direktori tersebut.
+    *   Atau, beberapa alat migrasi dapat menghasilkan satu file `schema.sql` yang merepresentasikan keadaan skema saat ini. Anda bisa mengarahkan `sqlc` ke file ini. `Atlas` sangat baik dalam hal ini.
+3.  Alur kerja: Buat migrasi -> jalankan `sqlc generate` -> jalankan migrasi.
+
+### Framework Web Go (Gin, Echo, Chi, dll.)
+
+`sqlc` menghasilkan lapisan akses data yang dapat dengan mudah diintegrasikan ke dalam _handler_ HTTP dari _framework web_ Go apa pun.
+
+**Contoh Pola Umum (dengan Gin):**
+```go
+package main
+
+import (
+	"database/sql"
+	"log"
+	"net/http"
+	"os"
+
+	"github.com/gin-gonic/gin"
+	_ "github.com/lib/pq"
+
+	"myapp/internal/db" // Paket sqlc Anda
+)
+
+type Server struct {
+	router *gin.Engine
+	store  *db.Queries // Atau interface db.Querier
+}
+
+func NewServer(database *sql.DB) *Server {
+	// Jika emit_prepared_queries: true, db.New akan return (queries, error)
+	queries, err := db.New(database)
+	if err != nil {
+		log.Fatalf("Gagal membuat store sqlc: %v", err)
+	}
+
+	server := &Server{store: queries}
+	router := gin.Default()
+
+	// Definisikan rute
+	router.POST("/users", server.createUserHandler)
+	router.GET("/users/:id", server.getUserHandler)
+
+	server.router = router
+	return server
+}
+
+func (s *Server) createUserHandler(c *gin.Context) {
+	var req db.CreateUserParams // Jika struct request cocok dengan CreateUserParams
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	user, err := s.store.CreateUser(c.Request.Context(), req)
+	if err != nil {
+		// Tangani error spesifik (misalnya, duplikasi email)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat pengguna"})
+		return
+	}
+	c.JSON(http.StatusCreated, user)
+}
+
+func (s *Server) getUserHandler(c *gin.Context) {
+	// Ambil ID dari path, konversi ke int64
+	// ... userID := ...
+
+	// user, err := s.store.GetUser(c.Request.Context(), userID)
+	// if err != nil {
+	// 	if errors.Is(err, sql.ErrNoRows) {
+	// 		c.JSON(http.StatusNotFound, gin.H{"error": "Pengguna tidak ditemukan"})
+	// 		return
+	// 	}
+	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil pengguna"})
+	// 	return
+	// }
+	// c.JSON(http.StatusOK, user)
+}
+
+func main() {
+	dbSource := os.Getenv("DB_SOURCE")
+	// ... setup koneksi DB (conn *sql.DB) ...
+    conn, _ := sql.Open("postgres", dbSource) // Error handling dihilangkan demi singkatnya
+    defer conn.Close()
+
+
+	server := NewServer(conn)
+	// ... jalankan server.router.Run() ...
+    log.Println("Server berjalan di :8080")
+    if err := server.router.Run(":8080"); err != nil {
+        log.Fatalf("Gagal menjalankan server: %v", err)
+    }
+}
+```
+*   _Inject_ instance `*db.Queries` (atau interface `db.Querier`) ke dalam _handler_ Anda (misalnya, melalui _struct receiver_).
+*   Gunakan `c.Request.Context()` untuk meneruskan konteks ke metode `sqlc`.
+*   Petakan _request payload_ ke struct `Params` yang dihasilkan `sqlc` jika sesuai.
+*   Tangani error dari `sqlc` (terutama `sql.ErrNoRows`) dan kembalikan respons HTTP yang benar.
+
+### Sistem Linting dan Formatting
+
+*   **SQL Linters/Formatters**:
+    *   Karena Anda menulis SQL mentah, Anda bisa menggunakan _linter_ dan _formatter_ SQL seperti `SQLFluff`, `pgFormatter`, atau fitur bawaan IDE Anda untuk menjaga file `.sql` tetap bersih dan konsisten.
+    *   Ini tidak terkait langsung dengan `sqlc generate` tetapi membantu kualitas kode SQL Anda.
+*   **Go Linters/Formatters**:
+    *   Kode Go yang dihasilkan `sqlc` sudah diformat dengan `gofmt`.
+    *   Gunakan _linter_ Go seperti `golangci-lint` pada kode aplikasi Anda yang menggunakan hasil `sqlc`.
+
+---
+
+## 14. Plugin sqlc
+
+`sqlc` memiliki sistem plugin yang memungkinkan Anda memperluas fungsionalitasnya, misalnya, untuk menghasilkan kode dalam bahasa lain atau format tambahan berdasarkan skema dan kueri SQL Anda.
+
+### Apa itu Plugin sqlc?
+
+Plugin `sqlc` adalah program eksternal yang menerima representasi terstruktur dari skema dan kueri Anda dari `sqlc` (dalam format Protobuf), dan kemudian dapat menghasilkan output apa pun yang diinginkan.
+
+`sqlc` menjalankan plugin setelah berhasil mem-parsing skema dan kueri.
+Ada dua jenis utama plugin:
+1.  **Plugin Proses (`process`)**: `sqlc` menjalankan perintah eksternal. Perintah ini membaca `plugin.CodeGeneratorRequest` dari `stdin` dan menulis `plugin.CodeGeneratorResponse` ke `stdout`.
+2.  **Plugin WebAssembly (`wasm`)**: Plugin dikompilasi ke WebAssembly. `sqlc` akan menjalankan modul Wasm ini. Ini menawarkan portabilitas yang lebih baik.
+
+### Proses Pengembangan Plugin
+
+1.  **Definisi Protobuf**: Anda perlu mengimpor definisi Protobuf `sqlc` untuk `plugin.CodeGeneratorRequest` dan `plugin.CodeGeneratorResponse`. Ini dapat ditemukan di repositori `sqlc` ([`internal/plugin/plugin.proto`](https://github.com/sqlc-dev/sqlc/blob/main/internal/plugin/plugin.proto)).
+2.  **Logika Plugin**:
+    *   Baca `CodeGeneratorRequest` dari `stdin`. Ini berisi informasi tentang skema, kueri, dan konfigurasi `sqlc`.
+    *   Proses informasi ini. Anda memiliki akses ke tabel, kolom, tipe data, kueri SQL, anotasi, dll.
+    *   Bangun `CodeGeneratorResponse`. Respons ini berisi daftar file yang ingin Anda hasilkan (nama file dan kontennya).
+    *   Tulis `CodeGeneratorResponse` ke `stdout`.
+3.  **Kompilasi**: Kompilasi plugin Anda menjadi biner eksekutabel (untuk plugin proses) atau modul Wasm.
+4.  **Konfigurasi**: Konfigurasikan `sqlc` untuk menggunakan plugin Anda melalui `sqlc.yaml`.
+
+### Contoh Plugin (Konseptual)
+
+Misalkan Anda ingin membuat plugin yang menghasilkan file TypeScript _interface_ untuk setiap tabel dan hasil kueri.
+
+*   **`sqlc-gen-typescript` (Plugin Proses)**:
+    *   Ditulis dalam Go, Node.js, Python, atau bahasa apa pun yang dapat membaca/menulis `stdin`/`stdout` dan menangani Protobuf.
+    *   Membaca `CodeGeneratorRequest`.
+    *   Iterasi melalui `request.Schema.Tables` untuk menghasilkan _interface_ TypeScript untuk setiap tabel.
+    *   Iterasi melalui `request.Queries` untuk menghasilkan _interface_ TypeScript untuk parameter dan hasil kueri.
+    *   Menghasilkan file `.ts` dan menyertakannya dalam `CodeGeneratorResponse`.
+
+*   **Plugin Resmi (jika ada)**:
+    *   `sqlc-gen-go` (generator Go bawaan) itu sendiri adalah implementasi dari sistem plugin ini.
+    *   Mungkin ada plugin pihak ketiga yang dikelola komunitas untuk bahasa lain seperti Kotlin, Swift, Python, dll. Periksa dokumentasi `sqlc` atau komunitas untuk daftar plugin yang tersedia. Contohnya `sqlc-gen-kotlin`.
+
+### Konfigurasi Plugin dalam `sqlc.yaml`
+
+```yaml
+version: "2"
+# Plugin bisa didefinisikan secara global atau per-paket SQL
+plugins:
+  - name: "ts-interfaces" # Nama untuk referensi (opsional)
+    process: # Menggunakan plugin proses
+      cmd: "./bin/sqlc-gen-typescript" # Path ke biner plugin Anda
+    # output: (Beberapa plugin mungkin mendukung output path di sini atau melalui opsi)
+    #   path: "frontend/src/db-types"
+    # options: # Opsi kustom yang akan diteruskan ke plugin
+    #   generateEnums: true
+    #   caseStyle: "camel"
+
+sql:
+  - engine: "postgresql"
+    schema: "db/schema.sql"
+    queries: "db/queries.sql"
+    gen:
+      go: # Generator Go bawaan
+        package: "db"
+        out: "internal/db"
+    # Anda juga bisa mendefinisikan plugin di level paket jika hanya berlaku untuk paket ini
+    # plugins:
+    #   - name: "ts-specific-to-this-package"
+    #     process:
+    #       cmd: "..."
+```
+
+**Opsi Plugin:**
+*   `name`: Nama plugin, untuk identifikasi.
+*   `process`: Untuk plugin berbasis proses.
+    *   `cmd`: Perintah untuk menjalankan plugin.
+*   `wasm`: Untuk plugin WebAssembly.
+    *   `url`: URL untuk mengunduh file `.wasm`.
+    *   `sha256`: Checksum SHA256 dari file `.wasm` untuk keamanan.
+    *   `path`: Path lokal ke file `.wasm`.
+*   `output`: Beberapa plugin mungkin memerlukan konfigurasi output tambahan. Di `v2` dari `sqlc.yaml`, plugin sekarang mendefinisikan output path mereka sendiri dalam `CodeGeneratorResponse`. Konfigurasi `output` di `sqlc.yaml` mungkin untuk kompatibilitas atau plugin lama.
+*   `options`: Objek JSON/YAML arbitrer yang akan diteruskan ke plugin dalam `CodeGeneratorRequest.PluginOptions`. Plugin dapat menggunakan ini untuk perilaku yang dapat dikonfigurasi.
+
+Sistem plugin sangat memperluas kemampuan `sqlc`, memungkinkan integrasi yang lebih dalam dengan berbagai _stack_ teknologi.
+
+---
+
+## 15. Pemecahan Masalah (Troubleshooting)
+
+Saat bekerja dengan `sqlc`, Anda mungkin menghadapi beberapa masalah umum. Berikut adalah beberapa di antaranya dan cara mengatasinya:
+
+### Error Umum Saat `sqlc generate`
+
+*   **`column "<nama_kolom>" does not exist`**:
+    *   **Penyebab**: Kueri Anda merujuk ke kolom yang tidak ada di skema yang diketahui `sqlc`.
+    *   **Solusi**:
+        1.  Periksa salah ketik nama kolom di file `.sql` Anda.
+        2.  Pastikan file skema (`schema.sql`) Anda sudah benar dan terbaru, dan kolom tersebut memang ada di definisi tabel.
+        3.  Jika Anda baru saja menambahkan kolom melalui migrasi, pastikan `sqlc` membaca skema yang diperbarui (misalnya, jika `sqlc` membaca direktori migrasi, pastikan file migrasi baru ada di sana; jika membaca satu file `schema.sql`, pastikan file itu telah diperbarui).
+        4.  Untuk MySQL, pastikan `sqlc` dapat terhubung ke basis data jika diperlukan untuk introspeksi skema (via `database: uri` di `sqlc.yaml`).
+
+*   **`relation "<nama_tabel>" does not exist`**:
+    *   **Penyebab**: Kueri Anda merujuk ke tabel atau _view_ yang tidak ada di skema yang diketahui `sqlc`.
+    *   **Solusi**: Sama seperti error kolom di atas, periksa salah ketik, pastikan skema benar dan terbaru.
+
+*   **`syntax error at or near "<token_SQL>"`**:
+    *   **Penyebab**: Ada kesalahan sintaks dalam file skema atau file kueri Anda.
+    *   **Solusi**: `sqlc` akan menunjukkan baris dan kadang-kadang token tempat error terjadi. Periksa dengan teliti sintaks SQL Anda. Gunakan _linter_ SQL atau validasi di editor SQL untuk menangkap ini lebih awal. Pastikan sintaksnya valid untuk `engine` basis data yang Anda konfigurasikan (`postgresql`, `mysql`, `sqlite`).
+
+*   **`unknown type: <nama_tipe_data>`**:
+    *   **Penyebab**: Anda menggunakan tipe data dalam skema DDL yang tidak dikenali `sqlc` untuk engine yang dipilih.
+    *   **Solusi**:
+        1.  Pastikan tipe data tersebut valid untuk basis data Anda.
+        2.  Jika itu adalah tipe kustom (misalnya, domain atau tipe komposit yang kompleks), `sqlc` mungkin memiliki dukungan terbatas. Anda mungkin perlu menyederhanakannya atau menggunakan `overrides` untuk memetakannya ke tipe Go yang diketahui jika `sqlc` hanya gagal memetakannya.
+        3.  Untuk tipe bawaan PostgreSQL, gunakan prefix `pg_catalog` (misalnya, `pg_catalog.int4` bukan hanya `int4`) jika ada ambiguitas.
+
+*   **`queries.sql:X:Y: NOT A VALID QUERY TYPE: :foo`**:
+    *   **Penyebab**: Anda menggunakan jenis kueri yang tidak valid dalam anotasi (misalnya, `:foo` bukan `:one`, `:many`, `:exec`, `:execrows`, atau `:copyfrom`).
+    *   **Solusi**: Perbaiki jenis kueri dalam anotasi `-- name: FunctionName :QueryType`.
+
+### Masalah Tipe Data Tidak Cocok
+
+*   **Tipe Go yang Dihasilkan Bukan yang Diharapkan**:
+    *   **Penyebab**: Pemetaan default `sqlc` mungkin tidak sesuai dengan kebutuhan Anda, atau kolom bersifat _nullable_ dan `sqlc` menggunakan tipe `sql.NullX` atau `pgtype`.
+    *   **Solusi**: Gunakan `overrides` dalam `sqlc.yaml` untuk menentukan pemetaan tipe Go yang diinginkan.
+        ```yaml
+        overrides:
+          - db_type: "numeric"
+            go_type: "github.com/shopspring/decimal.Decimal"
+          - column: "users.deleted_at"
+            nullable: true
+            go_type: # Untuk *time.Time
+              type: "time.Time"
+              pointer: true
+        ```
+
+*   **Error `Scan` saat runtime: `sql: Scan error on column index X, name "Y": converting driver.Value type Z ("...") to a T: invalid syntax`**:
+    *   **Penyebab**: Tipe data aktual yang dikembalikan oleh driver basis data saat runtime tidak dapat dikonversi ke tipe field struct Go yang diharapkan `sqlc` (dan Anda). Ini bisa terjadi jika skema yang dilihat `sqlc` saat `generate` berbeda dari skema basis data aktual, atau jika `override` Anda salah.
+    *   **Solusi**:
+        1.  Pastikan skema yang digunakan `sqlc` (file `schema.sql`) benar-benar sinkron dengan skema basis data Anda. Jalankan ulang migrasi jika perlu.
+        2.  Jalankan ulang `sqlc generate` setelah memverifikasi/memperbaiki skema.
+        3.  Periksa `overrides` Anda. Jika Anda meng-override tipe `TEXT` ke `int`, tetapi DB mengembalikan string non-numerik, `Scan` akan gagal.
+        4.  Untuk tipe seperti `NUMERIC` atau `DECIMAL`, `sqlc` sering default ke `string` Go untuk menjaga presisi. Jika Anda meng-override ke `float64`, Anda mungkin kehilangan presisi atau mendapatkan error jika formatnya tidak kompatibel.
+
+### Kueri Tidak Valid Secara Sintaks (Terdeteksi Runtime)
+
+*   **Penyebab**: Meskipun `sqlc` memvalidasi kueri terhadap skema, beberapa kesalahan sintaks yang lebih halus atau spesifik runtime mungkin lolos, atau Anda secara tidak sengaja mengubah kueri dalam kode Go yang dihasilkan (yang seharusnya tidak dilakukan).
+*   **Solusi**:
+    1.  Hampir selalu, masalahnya ada di file `.sql` asli Anda. `sqlc` menyematkan string SQL mentah ke dalam kode Go yang dihasilkan.
+    2.  Uji kueri SQL Anda langsung terhadap basis data menggunakan klien SQL untuk memastikan kueri tersebut valid dan berperilaku seperti yang diharapkan.
+    3.  Jangan pernah mengedit kode Go yang dihasilkan `sqlc`.
+
+### Perbedaan Perilaku Antar Engine Basis Data
+
+*   **Penyebab**: Anda mengembangkan dengan satu engine (misalnya, SQLite untuk tes lokal) tetapi _deploy_ dengan engine lain (misalnya, PostgreSQL di produksi), dan ada perbedaan halus dalam sintaks SQL atau perilaku tipe data.
+*   **Solusi**:
+    1.  **Uji dengan Engine Target**: Sebisa mungkin, lakukan _integration testing_ terhadap engine basis data yang sama dengan yang Anda gunakan di produksi.
+    2.  **SQL Standar**: Cobalah untuk menggunakan SQL yang sebisa mungkin standar ANSI jika Anda perlu mendukung beberapa engine. Namun, `sqlc` mendorong pemanfaatan fitur engine spesifik.
+    3.  **Konfigurasi `sqlc.yaml` Terpisah**: Jika Anda benar-benar perlu mendukung beberapa engine dari basis kode yang sama, Anda mungkin memerlukan beberapa konfigurasi `sql` dalam `sqlc.yaml` (atau file `sqlc.yaml` yang berbeda) dengan `engine` yang sesuai dan mungkin file kueri yang sedikit berbeda untuk setiap engine jika sintaksnya berbeda secara signifikan.
+
+### Tips Debugging
+
+*   **Periksa Output `sqlc generate -d` (Debug)**: Opsi `-d` atau `--debug` pada `sqlc generate` dapat memberikan lebih banyak informasi, terutama untuk MySQL saat `sqlc` melakukan kueri introspeksi.
+*   **Sederhanakan**: Jika Anda menghadapi masalah dengan kueri atau skema yang kompleks, coba sederhanakan menjadi kasus minimal untuk mengisolasi masalah. Komentari bagian-bagian skema atau kueri hingga `sqlc generate` berhasil, lalu tambahkan kembali sedikit demi sedikit.
+*   **Lihat Kode yang Dihasilkan**: Terkadang, melihat kode Go yang dihasilkan `sqlc` (misalnya, bagaimana ia memanggil `row.Scan()` atau tipe apa yang ia harapkan) dapat memberi petunjuk tentang masalahnya. Tapi ingat, jangan mengeditnya!
+*   **Versi `sqlc`**: Pastikan Anda menggunakan versi `sqlc` yang relatif baru, karena bug diperbaiki dan fitur ditambahkan secara berkala. Jika Anda menemukan perilaku aneh, periksa _changelog_ `sqlc` atau isu GitHub untuk melihat apakah itu masalah yang diketahui atau telah diperbaiki.
+*   **Periksa Isu GitHub `sqlc`**: Jika Anda yakin telah menemukan bug di `sqlc` atau perilaku yang tidak terdokumentasi, cari di [isu GitHub repositori sqlc](https://github.com/sqlc-dev/sqlc/issues). Mungkin orang lain telah melaporkannya.
+
+---
+
+## 16. Berkontribusi pada sqlc
+
+`sqlc` adalah proyek _open source_ dan kontribusi dari komunitas sangat dihargai. Ada banyak cara untuk berkontribusi:
+
+### Melaporkan Bug
+
+Jika Anda menemukan bug:
+1.  **Cari Isu yang Ada**: Periksa [daftar isu GitHub sqlc](https://github.com/sqlc-dev/sqlc/issues) untuk melihat apakah bug tersebut sudah dilaporkan.
+2.  **Buat Laporan Bug yang Baik**: Jika belum ada, buat isu baru. Sertakan:
+    *   Versi `sqlc` yang Anda gunakan (`sqlc version`).
+    *   Versi Go Anda.
+    *   Engine basis data dan versinya.
+    *   File `sqlc.yaml` minimal yang relevan.
+    *   File skema (`.sql`) minimal yang mereproduksi masalah.
+    *   File kueri (`.sql`) minimal yang mereproduksi masalah.
+    *   Output yang Anda dapatkan (termasuk pesan error).
+    *   Output yang Anda harapkan.
+    *   Langkah-langkah untuk mereproduksi bug.
+    Semakin banyak detail dan contoh minimal yang dapat direproduksi, semakin mudah bagi pengelola untuk mengatasi bug tersebut.
+
+### Mengajukan Permintaan Fitur
+
+Jika Anda memiliki ide untuk fitur baru atau peningkatan:
+1.  **Cari Permintaan yang Ada**: Periksa isu GitHub, mungkin ide tersebut sudah didiskusikan.
+2.  **Mulai Diskusi**: Pertimbangkan untuk memulai diskusi di [GitHub Discussions](https://github.com/sqlc-dev/sqlc/discussions) untuk mengukur minat dan mendapatkan umpan balik sebelum membuat permintaan fitur formal.
+3.  **Buat Isu Permintaan Fitur**: Jelaskan fitur yang Anda inginkan, mengapa itu berguna (kasus penggunaan), dan mungkin saran tentang bagaimana itu bisa diimplementasikan.
+
+### Kontribusi Kode
+
+Jika Anda ingin berkontribusi kode (memperbaiki bug atau mengimplementasikan fitur baru):
+1.  **Pilih Isu**: Biasanya yang terbaik adalah memilih isu yang ada (terutama yang berlabel `help wanted` atau `good first issue`) atau diskusikan kontribusi Anda terlebih dahulu dengan pengelola, terutama untuk perubahan besar.
+2.  **Fork Repositori**: Fork repositori `sqlc` di GitHub.
+3.  **Buat Branch**: Buat _branch_ baru untuk pekerjaan Anda (`git checkout -b fitur/nama-fitur-anda`).
+4.  **Lakukan Perubahan**: Tulis kode Anda. Ikuti gaya kode dan konvensi proyek.
+5.  **Tambahkan Tes**: Sangat penting untuk menambahkan tes untuk setiap kode baru atau perbaikan bug. `sqlc` memiliki _suite_ tes yang ekstensif.
+6.  **Jalankan Tes**: Pastikan semua tes (`go test ./...`) lolos.
+7.  **Commit Perubahan**: Buat _commit_ yang jelas dan deskriptif.
+8.  **Push ke Fork**: Push _branch_ Anda ke _fork_ Anda di GitHub.
+9.  **Buat Pull Request (PR)**: Buka PR dari _branch_ Anda di _fork_ Anda ke _branch_ `main` repositori `sqlc`.
+    *   Isi deskripsi PR dengan jelas, merujuk ke isu yang relevan jika ada.
+    *   Pengelola akan meninjau PR Anda. Bersiaplah untuk menjawab pertanyaan dan melakukan perubahan jika diminta.
+
+Dokumen `CONTRIBUTING.md` di repositori `sqlc` (jika ada) akan memiliki panduan yang lebih detail.
+
+### Komunitas (Discord, GitHub Discussions)
+
+*   **Discord**: `sqlc` memiliki server Discord di mana Anda dapat bertanya, berbagi pengalaman, dan berdiskusi dengan pengguna lain dan pengembang. Tautan biasanya ada di README repositori utama atau situs web `sqlc`.
+*   **GitHub Discussions**: Tempat yang baik untuk pertanyaan yang lebih luas, berbagi ide, atau memamerkan bagaimana Anda menggunakan `sqlc`.
+
+Kontribusi Anda, sekecil apa pun, membantu membuat `sqlc` menjadi alat yang lebih baik untuk semua orang.
+
+---
+
+## 17. Kesimpulan dan Langkah Selanjutnya
+
+Anda telah mencapai akhir panduan komprehensif ini untuk `sqlc`. Semoga sekarang Anda memiliki pemahaman yang kuat tentang apa itu `sqlc`, bagaimana cara kerjanya, dan bagaimana memanfaatkannya secara efektif dalam proyek Go Anda.
+
+### Rangkuman Keunggulan sqlc
+
+Mari kita ingat kembali mengapa `sqlc` adalah alat yang berharga:
+*   **SQL-First**: Anda menulis SQL, memanfaatkan kekuatan penuh basis data Anda.
+*   **Keamanan Tipe (Type Safety)**: Menangkap error SQL pada waktu kompilasi Go, bukan runtime.
+*   **Produktivitas Pengembang**: Mengurangi kode _boilerplate_ secara signifikan untuk interaksi basis data.
+*   **Performa**: Kode yang dihasilkan tipis dan efisien, dekat dengan performa SQL mentah.
+*   **Refactoring yang Lebih Aman**: Perubahan skema atau kueri tercermin dalam kode Go, dan kompiler membantu Anda.
+*   **Kode Idiomatis**: Menghasilkan kode Go yang terasa alami.
+*   **Tanpa Ketergantungan Runtime**: `sqlc` adalah alat waktu kompilasi.
+
+### Bagaimana sqlc Meningkatkan Produktivitas Anda
+
+Dengan mengotomatiskan pembuatan kode akses data yang repetitif dan rawan kesalahan, `sqlc` membebaskan Anda untuk fokus pada logika bisnis aplikasi Anda. Keamanan tipe yang diberikannya mengurangi waktu _debugging_ dan meningkatkan kepercayaan diri dalam kode Anda. Kemampuan untuk bekerja langsung dengan SQL juga berarti Anda tidak dibatasi oleh abstraksi ORM saat Anda membutuhkan kueri yang kompleks atau fitur basis data tertentu.
+
+### Sumber Belajar Tambahan
+
+Untuk melanjutkan perjalanan Anda dengan `sqlc`:
+*   **Dokumentasi Resmi sqlc**: [docs.sqlc.dev](https://docs.sqlc.dev/) – Ini adalah sumber informasi utama dan selalu yang paling _up-to-date_.
+*   **Contoh di Repositori sqlc**: [github.com/sqlc-dev/sqlc/tree/main/examples](https://github.com/sqlc-dev/sqlc/tree/main/examples) – Contoh penggunaan `sqlc` dengan berbagai basis data dan fitur.
+*   **Tutorial dan Artikel Blog**: Cari tutorial "sqlc Go" di mesin pencari favorit Anda. Banyak pengembang telah berbagi pengalaman dan panduan mereka.
+*   **Kode Sumber sqlc**: [github.com/sqlc-dev/sqlc](https://github.com/sqlc-dev/sqlc) – Membaca kode sumber (terutama generator Go) bisa memberikan pemahaman yang lebih dalam jika Anda tertarik.
+*   **Komunitas**: Bergabunglah dengan server Discord `sqlc` atau GitHub Discussions untuk belajar dari orang lain dan mengajukan pertanyaan.
+
+Teruslah berlatih, bereksperimen dengan berbagai fitur, dan integrasikan `sqlc` ke dalam proyek Anda. Selamat membuat kode!
